@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>GitHub Repository Analytics - Pull Requests</title>
+
+    <link rel="stylesheet" href="css/style.css">
+
+</head>
+
+<body>
+
+    <div class="dashboard-container">
+
+        <!-- Sidebar -->
+        <aside class="sidebar">
+
+            <div class="sidebar-brand">
+
+                <div class="brand-icon">GH</div>
+
+                <h2>GitHub Analytics</h2>
+
+            </div>
+
+
+            <nav class="sidebar-nav">
+
+    <a href="dashboard.html" class="nav-link">
+        Dashboard
+    </a>
+
+    <a href="repositories.html" class="nav-link">
+        Repositories
+    </a>
+
+    <a href="users.html" class="nav-link">
+        Users
+    </a>
+
+    <a href="issues.html" class="nav-link">
+        Issues
+    </a>
+
+    <a href="pull_requests.html" class="nav-link active">
+        Pull Requests
+    </a>
+
+    <a href="commits.html" class="nav-link">
+        Commits
+    </a>
+
+    <a href="languages.html" class="nav-link">
+        Languages
+    </a>
+    <a href="repository_management.html" class="nav-link">
+        Repository Management
+    </a>
+
+</nav>
+
+
+            <div class="sidebar-bottom">
+
+                <a href="#" class="nav-link" id="logoutLink">
+                    Logout
+                </a>
+
+            </div>
+
+        </aside>
+
+
+        <!-- Main Content -->
+        <main class="main-content">
+
+            <!-- Top Bar -->
+            <header class="topbar">
+
+                <div>
+
+                    <h1>Pull Requests</h1>
+
+                    <p>
+                        Track and analyze repository pull requests.
+                    </p>
+
+                </div>
+
+                <div class="user-info">
+
+                    <span>Welcome, User</span>
+
+                </div>
+
+            </header>
+
+
+            <!-- Pull Request Content -->
+            <section class="dashboard-content">
+
+                <div class="page-heading">
+
+                    <h2>Pull Request Overview</h2>
+
+                    <p>
+                        Browse pull requests and their current status.
+                    </p>
+
+                </div>
+
+
+                <!-- Search and Filter -->
+                <div class="repository-toolbar">
+
+                    <input
+                        type="text"
+                        id="pullRequestSearch"
+                        placeholder="Search pull requests..."
+                    >
+
+                    <select id="pullRequestStateFilter">
+
+                        <option value="">
+                            All States
+                        </option>
+
+                        <option value="open">
+                            Open
+                        </option>
+
+                        <option value="closed">
+                            Closed
+                        </option>
+
+                        <option value="merged">
+                            Merged
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+                <!-- Pull Request Table -->
+                <div class="table-card">
+
+                    <table>
+
+                        <thead>
+
+                            <tr>
+
+                                <th>PR ID</th>
+
+                                <th>Title</th>
+
+                                <th>State</th>
+
+                                <th>Created At</th>
+
+                                <th>Merged At</th>
+
+                            </tr>
+
+                        </thead>
+
+
+                        <tbody id="pullRequestsTableBody">
+</tbody>
+
+                    </table>
+
+                </div>
+
+            </section>
+
+        </main>
+
+    </div>
+
+
+    <script src="js/app.js"></script>
+
+</body>
+
+</html>
