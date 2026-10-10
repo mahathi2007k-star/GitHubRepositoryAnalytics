@@ -9,6 +9,8 @@ A database-focused analytics application for GitHub profile, repository, issue, 
 - `backend/db.py` — Oracle connection configuration
 - `backend/schema_project.sql` — project tables for a fresh local schema
 - `backend/migration_separate_app_accounts.sql` — one-time migration for an existing schema
+- `backend/migration_repository_audit.sql` — repair the repository audit trigger in an existing schema
+- `backend/migration_repository_audit.sql` — repair the repository audit trigger in an existing schema
 - `backend/promote_admin.py` — promote an existing app account to administrator
 - `backend/reset_password.py` — local operator password reset
 - `backend/migration_add_password_resets.sql` — create the one-time email reset token table
@@ -23,6 +25,8 @@ Back up the Oracle schema before migrating. At the SQL*Plus prompt, run the one-
 ```
 
 The migration checks for duplicate legacy usernames/emails, copies password-hash accounts from GITHUB_USER into APP_ACCOUNT, keeps all GitHub profile rows and their activity links, then drops the legacy PASSWORD_HASH column. Do not run it twice. To enable email password recovery on this existing database, also run `@C:\Users\mahat\OneDrive\Documents\GitHubRepositoryAnalytics\backend\migration_add_password_resets.sql` once.
+
+If repository import fails with Oracle `ORA-04098` for `TRG_REPOSITORY_AUDIT`, run `@C:\Users\mahat\OneDrive\Documents\GitHubRepositoryAnalytics\backend\migration_repository_audit.sql` once as SYSTEM. It creates the missing audit table and sequence, then recompiles the trigger.
 
 For a fresh database, run backend/schema_project.sql as the schema owner instead. This export currently names the SYSTEM schema and tablespace because that is where the local project tables were created; change those qualifiers before using a different schema.
 
