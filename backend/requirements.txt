@@ -2,3 +2,4 @@ Flask
 flask-cors
 oracledb
 Werkzeug
+gunicorn>=23,<24

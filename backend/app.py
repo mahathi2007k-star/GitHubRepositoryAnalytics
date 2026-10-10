@@ -10,7 +10,8 @@ from db import get_connection
 from github_sync import GitHubSyncError, sync_github_repository
 from password_recovery import RecoveryConfigurationError, make_reset_url, send_reset_email, validate_smtp_configuration
 
-app = Flask(__name__)
+frontend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
+app = Flask(__name__, static_folder=frontend_dir, static_url_path="")
 production = os.getenv("APP_ENV", "").lower() == "production"
 secret_key = os.getenv("FLASK_SECRET_KEY")
 if production and not secret_key:
@@ -65,8 +66,12 @@ def enforce_api_access():
 
 @app.route("/")
 def home():
+    return app.send_static_file("login.html")
 
-    return "GitHub Repository Analytics Backend is Running!"
+
+@app.route("/healthz")
+def health_check():
+    return jsonify({"status": "ok"}), 200
 
 
 @app.route("/api/users")

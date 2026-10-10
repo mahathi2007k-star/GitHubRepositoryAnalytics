@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: github-repository-analytics
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: gunicorn --chdir backend app:app --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: FLASK_SECRET_KEY
+        generateValue: true
+      - key: ORACLE_USER
+        sync: false
+      - key: ORACLE_PASSWORD
+        sync: false
+      - key: ORACLE_DSN
+        sync: false
+      - key: ORACLE_WALLET_DIR
+        value: /etc/secrets
+      - key: ORACLE_WALLET_PASSWORD
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: PASSWORD_RESET_URL
+        sync: false

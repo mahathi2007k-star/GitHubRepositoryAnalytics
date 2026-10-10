@@ -8,8 +8,9 @@ A database-focused analytics application for GitHub profile, repository, issue, 
 - `backend/app.py` — Flask API with session login and authenticated repository management
 - `backend/db.py` — Oracle connection configuration
 - `backend/schema_project.sql` — project tables for a fresh local schema
+- `backend/schema_cloud.sql` — portable tables for a dedicated Oracle Autonomous Database schema
+- `render.yaml` — one-service Render deployment blueprint
 - `backend/migration_separate_app_accounts.sql` — one-time migration for an existing schema
-- `backend/migration_repository_audit.sql` — repair the repository audit trigger in an existing schema
 - `backend/migration_repository_audit.sql` — repair the repository audit trigger in an existing schema
 - `backend/promote_admin.py` — promote an existing app account to administrator
 - `backend/reset_password.py` — local operator password reset
@@ -70,8 +71,31 @@ Email password recovery requires SMTP settings in the backend environment: `SMTP
 - GitHub repository import/sync for repository details, contributors, recent commits, issues, pull requests, and languages
 - Repository fetch and search, plus user, issue, pull-request, commit, and language views
 
-## Deployment status
+## Deploy for teammate access
 
-The application is prepared for authenticated local use. A public deployment still needs a cloud-accessible Oracle database, production secrets and allowed CORS origins, and a deployment-specific API routing configuration. The local Oracle XE database cannot be reached by a hosted Vercel function.
+The Render blueprint deploys one Flask web service that serves both the frontend and API from the same HTTPS origin. It avoids cross-site login-cookie configuration. Render's build and start settings are in `render.yaml`; it reads dependencies from `backend/requirements.txt` and starts Gunicorn from the backend folder.
 
-Before a public deployment, also configure HTTPS and review CSRF protection, login rate limiting, database least-privilege access, and account recovery.
+### 1. Create the cloud Oracle database
+
+Create an Oracle Autonomous Database in Oracle Cloud. In Database Actions, create a dedicated application database user with a quota on tablespace DATA and permission to create sessions, tables, sequences, and triggers. Connect as that user and run `backend/schema_cloud.sql`. Do not use your local SYSTEM account or put database credentials in the repository.
+
+Download an instance wallet for the database. The deployment uses python-oracledb Thin mode and expects the wallet's `tnsnames.ora`, `sqlnet.ora`, and `ewallet.pem` files in the wallet directory. See [Oracle wallet setup](https://docs.oracle.com/en/cloud/paas/autonomous-database/serverless/adbsb/connect-download-wallet.html) and [python-oracledb wallet connections](https://python-oracledb.readthedocs.io/en/stable/user_guide/connection_handling.html).
+
+### 2. Deploy on Render
+
+In Render, create a Blueprint from this GitHub repository and use `render.yaml`. Its generated `FLASK_SECRET_KEY` is managed by Render. In the service's Environment settings, provide `ORACLE_USER`, `ORACLE_PASSWORD`, `ORACLE_DSN` (a service alias from `tnsnames.ora`), and `ORACLE_WALLET_PASSWORD`. Upload `tnsnames.ora`, `sqlnet.ora`, and `ewallet.pem` as secret files; `ORACLE_WALLET_DIR` is already set to `/etc/secrets`.
+
+Add `SMTP_USERNAME`, `SMTP_PASSWORD` (the Gmail App Password), `SMTP_FROM`, and `PASSWORD_RESET_URL`. Set the reset URL to `https://YOUR-SERVICE.onrender.com/reset_password.html` after Render gives the service its public URL. Never place secret values in GitHub or send them in chat.
+
+### 3. Initialize the shared app
+
+Open the Render service URL and register your app account. To make it the administrator, run this statement in the cloud database's SQL worksheet while connected as the application schema user, replacing the username with your registered app username:
+
+```sql
+UPDATE APP_ACCOUNT SET ROLE = 'ADMIN' WHERE USERNAME = LOWER('your_username');
+COMMIT;
+```
+
+Log out and back in. Teammates can register through the same public URL. The new cloud database starts empty; sync the GitHub repositories you want to analyze. Local Oracle XE accounts and data are not copied automatically.
+
+Render's free web services sleep after 15 minutes without traffic, so the first request after idle may take longer. For production use, review security settings and the current plan limits before sharing widely.
