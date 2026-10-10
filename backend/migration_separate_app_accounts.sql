@@ -1,0 +1,68 @@
+-- One-time migration for an existing project database.
+-- Back up the schema first. Run as the owner of the project tables.
+-- Existing GITHUB_USER rows are retained so commits/repositories keep their links.
+WHENEVER SQLERROR EXIT SQL.SQLCODE ROLLBACK
+
+DECLARE
+    duplicate_count NUMBER;
+    invalid_count NUMBER;
+BEGIN
+    SELECT COUNT(*) INTO invalid_count
+    FROM GITHUB_USER
+    WHERE PASSWORD_HASH IS NOT NULL
+      AND (USERNAME IS NULL OR TRIM(USERNAME) IS NULL
+           OR EMAIL IS NULL OR TRIM(EMAIL) IS NULL);
+    IF invalid_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20001, 'A legacy app account has a blank username or email; resolve it before migration.');
+    END IF;
+
+    SELECT COUNT(*) INTO duplicate_count
+    FROM (
+        SELECT LOWER(TRIM(USERNAME))
+        FROM GITHUB_USER
+        WHERE PASSWORD_HASH IS NOT NULL
+        GROUP BY LOWER(TRIM(USERNAME))
+        HAVING COUNT(*) > 1
+    );
+    IF duplicate_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20002, 'Duplicate legacy account usernames; resolve them before migration.');
+    END IF;
+
+    SELECT COUNT(*) INTO duplicate_count
+    FROM (
+        SELECT LOWER(TRIM(EMAIL))
+        FROM GITHUB_USER
+        WHERE PASSWORD_HASH IS NOT NULL
+        GROUP BY LOWER(TRIM(EMAIL))
+        HAVING COUNT(*) > 1
+    );
+    IF duplicate_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Duplicate legacy account emails; resolve them before migration.');
+    END IF;
+END;
+/
+
+CREATE TABLE APP_ACCOUNT (
+    ACCOUNT_ID NUMBER GENERATED ALWAYS AS IDENTITY,
+    USERNAME VARCHAR2(50) NOT NULL,
+    EMAIL VARCHAR2(255) NOT NULL,
+    PASSWORD_HASH VARCHAR2(255) NOT NULL,
+    ROLE VARCHAR2(10) DEFAULT 'USER' NOT NULL,
+    CREATED_AT TIMESTAMP(6) DEFAULT SYSTIMESTAMP NOT NULL,
+    CONSTRAINT PK_APP_ACCOUNT PRIMARY KEY (ACCOUNT_ID),
+    CONSTRAINT UQ_APP_ACCOUNT_USERNAME UNIQUE (USERNAME),
+    CONSTRAINT UQ_APP_ACCOUNT_EMAIL UNIQUE (EMAIL),
+    CONSTRAINT CK_APP_ACCOUNT_ROLE CHECK (ROLE IN ('ADMIN', 'USER'))
+);
+
+INSERT INTO APP_ACCOUNT (USERNAME, EMAIL, PASSWORD_HASH, ROLE, CREATED_AT)
+SELECT LOWER(TRIM(USERNAME)),
+       LOWER(TRIM(EMAIL)),
+       PASSWORD_HASH,
+       'USER',
+       NVL(CREATED_AT, SYSTIMESTAMP)
+FROM GITHUB_USER
+WHERE PASSWORD_HASH IS NOT NULL;
+
+ALTER TABLE GITHUB_USER DROP COLUMN PASSWORD_HASH;
+COMMIT;

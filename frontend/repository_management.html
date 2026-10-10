@@ -328,6 +328,28 @@
                     <div class="management-tip">Changes apply to your Oracle database</div>
                 </header>
 
+                <div class="management-section-title">Import live GitHub data</div>
+                <section class="management-card" aria-labelledby="githubSyncHeading">
+                    <div class="management-card-head">
+                        <div class="management-card-icon" aria-hidden="true">↻</div>
+                        <div>
+                            <h2 id="githubSyncHeading">Sync a GitHub repository</h2>
+                            <p>Import repository details, contributors, recent commits, issues, pull requests, and detected languages into Oracle.</p>
+                        </div>
+                    </div>
+                    <form id="githubSyncForm">
+                        <div class="form-group">
+                            <label for="githubSyncFullName">GitHub repository</label>
+                            <input type="text" id="githubSyncFullName" maxlength="210" placeholder="owner/repository" autocomplete="off" required>
+                        </div>
+                        <div class="management-actions">
+                            <button class="action-button" id="githubSyncButton" type="submit">Sync from GitHub <span aria-hidden="true">→</span></button>
+                            <span style="color:#656d76;font-size:12px">Public repositories work without a token. Each activity list imports up to 500 records.</span>
+                        </div>
+                    </form>
+                    <p id="githubSyncMessage" class="management-message" role="status" aria-live="polite"></p>
+                </section>
+
                 <div class="management-section-title">Create a repository</div>
                 <section class="management-card" aria-labelledby="addHeading">
                     <div class="management-card-head">

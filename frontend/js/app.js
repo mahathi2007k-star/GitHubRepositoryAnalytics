@@ -1,6 +1,26 @@
+const API_BASE_URL = (
+    window.GITHUB_ANALYTICS_API_BASE ||
+    (["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? "http://" + window.location.hostname + ":5000"
+        : "")
+).replace(/\/$/, "");
+
+function apiFetch(url, options = {}) {
+    let targetUrl = url;
+    if (typeof url === "string" && url.startsWith("http://127.0.0.1:5000")) {
+        targetUrl = API_BASE_URL + url.slice("http://127.0.0.1:5000".length);
+    } else if (typeof url === "string" && url.startsWith("/") && API_BASE_URL) {
+        targetUrl = API_BASE_URL + url;
+    }
+    return window.fetch(targetUrl, {
+        ...options,
+        credentials: "include"
+    });
+}
+
 function isWholeNumberAtLeast(value, minimum) {
     const text = String(value).trim();
-    return /^\\d+$/.test(text) && Number(text) >= minimum;
+    return /^\d+$/.test(text) && Number(text) >= minimum;
 }
 
 // ============================================================
@@ -32,7 +52,7 @@ if (password === "") {
 
         try {
 
-            const response = await fetch(
+            const response = await apiFetch(
                 "http://127.0.0.1:5000/api/login",
                 {
                     method: "POST",
@@ -52,6 +72,7 @@ if (password === "") {
 
     sessionStorage.setItem("loggedIn", "true");
     sessionStorage.setItem("username", result.username);
+    sessionStorage.setItem("role", result.role);
 
     alert("Login successful!");
 
@@ -210,7 +231,7 @@ if (password.length < 8) {
 
             try {
 
-                const response = await fetch(
+                const response = await apiFetch(
                     "http://127.0.0.1:5000/api/register",
                     {
                         method: "POST",
@@ -705,7 +726,7 @@ const usersTableBody =
 
 if (usersTableBody) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/users"
     )
 
@@ -734,14 +755,24 @@ if (usersTableBody) {
                     document.createElement("tr");
 
 
-                row.innerHTML = `
-                    <td>${user.username || "-"}</td>
-                    <td>${user.name || "-"}</td>
-                    <td>${user.email || "-"}</td>
-                    <td>${user.user_type || "-"}</td>
-                    <td>${user.location || "-"}</td>
-                    <td>${user.created_at || "-"}</td>
-                `;
+                const values = [
+                    user.username,
+                    user.name,
+                    user.user_type,
+                    user.location,
+                    user.repositories_contributed,
+                    user.contributions,
+                    user.commits_authored,
+                    user.issues_opened,
+                    user.pull_requests_opened
+                ];
+                values.forEach(function(value) {
+                    const cell = document.createElement("td");
+                    cell.textContent = value === null || value === undefined || value === ""
+                        ? "-"
+                        : String(value);
+                    row.appendChild(cell);
+                });
 
 
                 usersTableBody.appendChild(row);
@@ -760,7 +791,7 @@ if (usersTableBody) {
 
             usersTableBody.innerHTML = `
                 <tr>
-                    <td colspan="6">
+                    <td colspan="9">
                         Unable to load users.
                     </td>
                 </tr>
@@ -783,7 +814,7 @@ const repositoriesTableBody =
 
 if (repositoriesTableBody) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/repositories"
     )
 
@@ -865,7 +896,7 @@ const issuesTableBody =
 
 if (issuesTableBody) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/issues"
     )
 
@@ -944,7 +975,7 @@ const pullRequestsTableBody =
 
 if (pullRequestsTableBody) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/pull-requests"
     )
 
@@ -1027,7 +1058,7 @@ const commitsTableBody =
 
 if (commitsTableBody) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/commits"
     )
 
@@ -1104,7 +1135,7 @@ const languagesTableBody =
 
 if (languagesTableBody) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/languages"
     )
 
@@ -1208,7 +1239,7 @@ if (
     commitCount
 ) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/dashboard-stats"
     )
 
@@ -1291,7 +1322,7 @@ if (
     totalContributions
 ) {
 
-    fetch(
+    apiFetch(
         "http://127.0.0.1:5000/api/analytics"
     )
 
@@ -1345,6 +1376,49 @@ if (
 
 }
 // ================================
+// ================================
+// SYNC A PUBLIC GITHUB REPOSITORY INTO ORACLE
+// ================================
+const githubSyncForm = document.getElementById("githubSyncForm");
+
+if (githubSyncForm) {
+    githubSyncForm.addEventListener("submit", async function(event) {
+        event.preventDefault();
+        const message = document.getElementById("githubSyncMessage");
+        const button = document.getElementById("githubSyncButton");
+        const fullName = document.getElementById("githubSyncFullName").value.trim();
+        button.disabled = true;
+        message.style.color = "#656d76";
+        message.textContent = "Fetching GitHub data and saving it to Oracle…";
+
+        try {
+            const response = await apiFetch("/api/github/sync", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ full_name: fullName })
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error || "GitHub synchronization failed.");
+            }
+
+            const truncated = Object.entries(result.truncated || {})
+                .filter(function(entry) { return entry[1]; })
+                .map(function(entry) { return entry[0]; });
+            message.style.color = "#1a7f37";
+            message.textContent = "Synced " + result.repository + ": " +
+                result.contributors + " contributors, " + result.commits + " commits, " +
+                result.issues + " issues, " + result.pull_requests + " pull requests; " +
+                result.languages_added + " new languages added." +
+                (truncated.length ? " Reached the 500-record import limit for: " + truncated.join(", ") + "." : "");
+        } catch (error) {
+            message.style.color = "#cf222e";
+            message.textContent = error.message || "Unable to complete GitHub synchronization.";
+        } finally {
+            button.disabled = false;
+        }
+    });
+}
 // PART C - ADD REPOSITORY
 // ================================
 
@@ -1401,7 +1475,7 @@ if (["addStars", "addForks", "addOpenIssues"].some((id) =>
 
         try {
 
-            const response = await fetch(
+            const response = await apiFetch(
                 "http://127.0.0.1:5000/api/repositories",
                 {
                     method: "POST",
@@ -1462,7 +1536,7 @@ if (fetchRepositoryForm) {
 
         try {
 
-            const response = await fetch(
+            const response = await apiFetch(
                 `http://127.0.0.1:5000/api/repositories/${repositoryId}`
             );
 
@@ -1517,7 +1591,7 @@ if (searchButton) {
         }
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `http://127.0.0.1:5000/api/repositories/search?name=${encodeURIComponent(searchName)}`
             );
 
@@ -1596,7 +1670,7 @@ if (updateRepositoryForm) {
         }
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `http://127.0.0.1:5000/api/repositories/${repositoryId}`,
                 {
                     method: "PUT",
@@ -1649,7 +1723,7 @@ if (deleteRepositoryForm) {
         }
 
         try {
-            const response = await fetch(
+            const response = await apiFetch(
                 `http://127.0.0.1:5000/api/repositories/${repositoryId}`,
                 {
                     method: "DELETE"
@@ -1680,20 +1754,85 @@ if (deleteRepositoryForm) {
 const currentPage =
     window.location.pathname.split("/").pop();
 
+const forgotPasswordForm = document.getElementById("forgotPasswordForm");
+if (forgotPasswordForm) {
+    forgotPasswordForm.addEventListener("submit", async function(event) {
+        event.preventDefault();
+        const message = document.getElementById("forgotPasswordMessage");
+        const button = document.getElementById("forgotPasswordButton");
+        button.disabled = true;
+        message.textContent = "Submitting request…";
+        try {
+            const response = await apiFetch("/api/password/forgot", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: document.getElementById("recoveryEmail").value.trim(),
+                    reset_page_url: new URL("reset_password.html", window.location.href).toString()
+                })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Could not submit the request.");
+            message.textContent = result.message;
+        } catch (error) {
+            message.textContent = error.message || "Unable to reach the server.";
+        } finally {
+            button.disabled = false;
+        }
+    });
+}
+
+const resetPasswordForm = document.getElementById("resetPasswordForm");
+if (resetPasswordForm) {
+    resetPasswordForm.addEventListener("submit", async function(event) {
+        event.preventDefault();
+        const message = document.getElementById("resetPasswordMessage");
+        const button = document.getElementById("resetPasswordButton");
+        const password = document.getElementById("newPassword").value;
+        const confirmation = document.getElementById("confirmNewPassword").value;
+        if (password !== confirmation) {
+            message.textContent = "The passwords do not match.";
+            return;
+        }
+        const token = new URLSearchParams(window.location.search).get("token");
+        if (!token) {
+            message.textContent = "This reset link is invalid or expired. Request a new one.";
+            return;
+        }
+        button.disabled = true;
+        message.textContent = "Updating password…";
+        try {
+            const response = await apiFetch("/api/password/reset", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: token, password: password })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Password reset failed.");
+            message.textContent = result.message;
+            resetPasswordForm.reset();
+            window.history.replaceState({}, document.title, window.location.pathname);
+        } catch (error) {
+            message.textContent = error.message || "Unable to reach the server.";
+        } finally {
+            button.disabled = false;
+        }
+    });
+}
 const publicPages = [
     "login.html",
-    "register.html"
+    "register.html",
+    "forgot_password.html",
+    "reset_password.html"
 ];
 
-if (!publicPages.includes(currentPage)) {
+const loggedIn = sessionStorage.getItem("loggedIn");
 
-    const loggedIn =
-        sessionStorage.getItem("loggedIn");
-
-    if (loggedIn !== "true") {
-        window.location.href = "login.html";
-    }
+if (!publicPages.includes(currentPage) && loggedIn !== "true") {
+    window.location.href = "login.html";
 }
+
+
 // ============================================================
 // LOGOUT
 // ============================================================
@@ -1703,13 +1842,19 @@ const logoutLink =
 
 if (logoutLink) {
 
-    logoutLink.addEventListener("click", function(event) {
+    logoutLink.addEventListener("click", async function(event) {
 
         event.preventDefault();
 
-        sessionStorage.removeItem("loggedIn");
-        sessionStorage.removeItem("username");
-
-        window.location.href = "login.html";
+        try {
+            await apiFetch("/api/logout", { method: "POST" });
+        } catch (error) {
+            console.error("Logout request failed:", error);
+        } finally {
+            sessionStorage.removeItem("loggedIn");
+            sessionStorage.removeItem("username");
+            sessionStorage.removeItem("role");
+            window.location.href = "login.html";
+        }
     });
 }
