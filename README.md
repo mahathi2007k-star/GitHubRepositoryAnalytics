@@ -1,12 +1,13 @@
 # GitHub Repository Analytics
 
-A database-focused analytics application for GitHub profile, repository, issue, pull-request, commit, and contribution data. The frontend uses HTML, CSS, and JavaScript; a Flask API reads and updates Oracle Database 21c XE.
+A database-focused analytics application for GitHub profile, repository, issue, pull-request, commit, and contribution data. The frontend uses HTML, CSS, and JavaScript; a Flask API reads and updates the database. The original local Oracle XE setup remains documented below; this deployment branch uses PostgreSQL for a free hosted demo.
 
 ## Project structure
 
 - `frontend/` — dashboard, GitHub user activity, data views, login, and repository management
 - `backend/app.py` — Flask API with session login and authenticated repository management
-- `backend/db.py` — Oracle connection configuration
+- `backend/db.py` — PostgreSQL connection configuration for this hosted-demo branch
+- `backend/schema_postgres.sql` — schema for the hosted PostgreSQL database
 - `backend/schema_project.sql` — project tables for a fresh local schema
 - `backend/schema_cloud.sql` — portable tables for a dedicated Oracle Autonomous Database schema
 - `render.yaml` — one-service Render deployment blueprint
@@ -71,31 +72,37 @@ Email password recovery requires SMTP settings in the backend environment: `SMTP
 - GitHub repository import/sync for repository details, contributors, recent commits, issues, pull requests, and languages
 - Repository fetch and search, plus user, issue, pull-request, commit, and language views
 
-## Deploy for teammate access
+## Deploy for teammate access (free hosted demo)
 
-The Render blueprint deploys one Flask web service that serves both the frontend and API from the same HTTPS origin. It avoids cross-site login-cookie configuration. Render's build and start settings are in `render.yaml`; it reads dependencies from `backend/requirements.txt` and starts Gunicorn from the backend folder.
+This branch is the online-demo variant. It uses Render for the Flask app and Neon PostgreSQL for hosted data. Your local Oracle XE project remains a separate version; Oracle data is not copied to Neon automatically. Render's free web service can sleep when idle, so the first visit after inactivity may take around a minute. Neon and Render free-plan limits can change; check their current dashboards before relying on the demo for long-term storage.
 
-### 1. Create the cloud Oracle database
+### 1. Create the PostgreSQL database
 
-Create an Oracle Autonomous Database in Oracle Cloud. In Database Actions, create a dedicated application database user with a quota on tablespace DATA and permission to create sessions, tables, sequences, and triggers. Connect as that user and run `backend/schema_cloud.sql`. Do not use your local SYSTEM account or put database credentials in the repository.
+1. Create a free PostgreSQL project in Neon.
+2. Copy its pooled PostgreSQL connection string from the Connect panel. Keep it private.
+3. Open Neon SQL Editor, paste and run `backend/schema_postgres.sql` from this repository. This creates the app-account, repository, GitHub activity, reset-token, and audit tables.
 
-Download an instance wallet for the database. The deployment uses python-oracledb Thin mode and expects the wallet's `tnsnames.ora`, `sqlnet.ora`, and `ewallet.pem` files in the wallet directory. See [Oracle wallet setup](https://docs.oracle.com/en/cloud/paas/autonomous-database/serverless/adbsb/connect-download-wallet.html) and [python-oracledb wallet connections](https://python-oracledb.readthedocs.io/en/stable/user_guide/connection_handling.html).
+### 2. Publish this branch to GitHub
 
-### 2. Deploy on Render
+This deployment uses the `codex/postgres-online-demo` branch. Push this branch to your GitHub repository after reviewing the changed files. Do not push `.env` files, passwords, database URLs, API keys, or wallet files.
 
-In Render, create a Blueprint from this GitHub repository and use `render.yaml`. Its generated `FLASK_SECRET_KEY` is managed by Render. In the service's Environment settings, provide `ORACLE_USER`, `ORACLE_PASSWORD`, `ORACLE_DSN` (a service alias from `tnsnames.ora`), and `ORACLE_WALLET_PASSWORD`. Upload `tnsnames.ora`, `sqlnet.ora`, and `ewallet.pem` as secret files; `ORACLE_WALLET_DIR` is already set to `/etc/secrets`.
+### 3. Create the Render service
 
-Add `SMTP_USERNAME`, `SMTP_PASSWORD` (the Gmail App Password), `SMTP_FROM`, and `PASSWORD_RESET_URL`. Set the reset URL to `https://YOUR-SERVICE.onrender.com/reset_password.html` after Render gives the service its public URL. Never place secret values in GitHub or send them in chat.
+1. In Render, create a new Blueprint and select your GitHub repository and the `codex/postgres-online-demo` branch.
+2. Render reads `render.yaml`. Set `DATABASE_URL` to the Neon connection string. Keep the value in Render's Environment settings only.
+3. After Render assigns a URL, set `PASSWORD_RESET_URL` to `https://YOUR-SERVICE.onrender.com/reset_password.html`.
+4. Deploy and open the Render URL. Register your own account, then use the Neon SQL Editor to promote it:
 
-### 3. Initialize the shared app
+   ```sql
+   UPDATE APP_ACCOUNT SET ROLE = 'ADMIN' WHERE USERNAME = LOWER('your_username');
+   ```
 
-Open the Render service URL and register your app account. To make it the administrator, run this statement in the cloud database's SQL worksheet while connected as the application schema user, replacing the username with your registered app username:
+5. Log out and back in so the browser session loads the ADMIN role. Teammates can register through the same app URL; all authenticated users can manage repository records.
 
-```sql
-UPDATE APP_ACCOUNT SET ROLE = 'ADMIN' WHERE USERNAME = LOWER('your_username');
-COMMIT;
-```
+### 4. GitHub sync and password-reset email
 
-Log out and back in. Teammates can register through the same public URL. The new cloud database starts empty; sync the GitHub repositories you want to analyze. Local Oracle XE accounts and data are not copied automatically.
+Public repositories can be synced without a GitHub token. To raise GitHub API rate limits, set `GITHUB_TOKEN` as a private Render environment variable.
 
-Render's free web services sleep after 15 minutes without traffic, so the first request after idle may take longer. For production use, review security settings and the current plan limits before sharing widely.
+Password-reset emails use Resend's HTTPS API, since Render's free web services block outbound SMTP. Create a Resend account, verify a sending domain you control, then set `RESEND_API_KEY` and `RESEND_FROM_EMAIL` in Render. The sender address must belong to that verified domain. Until this is configured, app registration and login can work, but email password recovery will not send reset links. A custom domain is therefore needed for password-reset emails to all users through this setup.
+
+Never paste secret values into chat, source files, screenshots, or GitHub. The deployed app has its own empty hosted database; importing data from your Oracle XE instance is a separate migration task.

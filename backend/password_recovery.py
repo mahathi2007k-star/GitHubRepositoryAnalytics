@@ -1,9 +1,9 @@
-"""Email delivery helpers for account password recovery."""
+"""Email delivery helpers for account password recovery via Resend's HTTPS API."""
 
+import json
 import os
-import smtplib
-import ssl
-from email.message import EmailMessage
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 
@@ -39,46 +39,42 @@ def make_reset_url(request, token, frontend_reset_url=None):
 
 
 def validate_smtp_configuration():
-    host = os.getenv("SMTP_HOST", "").strip()
-    sender = os.getenv("SMTP_FROM", os.getenv("SMTP_USERNAME", "")).strip()
-    username = os.getenv("SMTP_USERNAME", "").strip()
-    password = os.getenv("SMTP_PASSWORD", "")
-    try:
-        port = int(os.getenv("SMTP_PORT", "587"))
-    except ValueError as error:
-        raise RecoveryConfigurationError("SMTP_PORT must be a number.") from error
-    if not 1 <= port <= 65535:
-        raise RecoveryConfigurationError("SMTP_PORT must be between 1 and 65535.")
-    if not host or not sender:
-        raise RecoveryConfigurationError("Set SMTP_HOST and SMTP_FROM to enable email recovery.")
-    if bool(username) != bool(password):
-        raise RecoveryConfigurationError("Set both SMTP_USERNAME and SMTP_PASSWORD, or leave both blank.")
-    return host, port, sender, username, password
+    """Kept under its historical name because app.py imports this validator."""
+    if not os.getenv("RESEND_API_KEY", "").strip():
+        raise RecoveryConfigurationError("Set RESEND_API_KEY to enable email recovery.")
+    sender = os.getenv("RESEND_FROM_EMAIL", "").strip()
+    if not sender or "@" not in sender:
+        raise RecoveryConfigurationError("Set RESEND_FROM_EMAIL to an address on a verified sending domain.")
+    return sender
 
 
 def send_reset_email(recipient, username, reset_url):
-    host, port, sender, smtp_username, smtp_password = validate_smtp_configuration()
-    message = EmailMessage()
-    message["Subject"] = "Reset your GitHub Repository Analytics password"
-    message["From"] = sender
-    message["To"] = recipient
-    message.set_content(
+    sender = validate_smtp_configuration()
+    body = (
         "Hello {},\n\nUse this one-time link to reset your GitHub Repository Analytics password. "
         "It expires in 30 minutes.\n\n{}\n\nIf you did not request this, you can ignore this email."
-        .format(username, reset_url)
+    ).format(username, reset_url)
+    payload = json.dumps({
+        "from": sender,
+        "to": [recipient],
+        "subject": "Reset your GitHub Repository Analytics password",
+        "text": body,
+    }).encode("utf-8")
+    request = Request(
+        "https://api.resend.com/emails",
+        data=payload,
+        headers={
+            "Authorization": "Bearer " + os.environ["RESEND_API_KEY"].strip(),
+            "Content-Type": "application/json",
+            "User-Agent": "GitHubRepositoryAnalytics/1.0",
+        },
+        method="POST",
     )
-
-    context = ssl.create_default_context()
-    if port == 465:
-        with smtplib.SMTP_SSL(host, port, timeout=20, context=context) as server:
-            if smtp_username:
-                server.login(smtp_username, smtp_password)
-            server.send_message(message)
-    else:
-        with smtplib.SMTP(host, port, timeout=20) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            if smtp_username:
-                server.login(smtp_username, smtp_password)
-            server.send_message(message)
+    try:
+        with urlopen(request, timeout=20) as response:
+            if response.status >= 300:
+                raise RuntimeError("Email provider rejected the request.")
+    except HTTPError as error:
+        raise RuntimeError("Email provider rejected the request (HTTP {}).".format(error.code)) from error
+    except (URLError, TimeoutError, OSError) as error:
+        raise RuntimeError("Could not connect to the email provider.") from error
