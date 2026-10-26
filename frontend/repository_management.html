@@ -325,7 +325,7 @@
                         <h1>Repository management</h1>
                         <p>Create and maintain the repository records behind your analytics. Choose a tool below to get started.</p>
                     </div>
-                    <div class="management-tip">Changes apply to your Oracle database</div>
+                    <div class="management-tip">Changes apply to your hosted PostgreSQL database</div>
                 </header>
 
                 <div class="management-section-title">Import live GitHub data</div>
@@ -334,7 +334,7 @@
                         <div class="management-card-icon" aria-hidden="true">↻</div>
                         <div>
                             <h2 id="githubSyncHeading">Sync a GitHub repository</h2>
-                            <p>Import repository details, contributors, recent commits, issues, pull requests, and detected languages into Oracle.</p>
+                            <p>Import repository details, contributors, recent commits, issues, pull requests, and detected languages into the hosted database.</p>
                         </div>
                     </div>
                     <form id="githubSyncForm">
@@ -344,7 +344,7 @@
                         </div>
                         <div class="management-actions">
                             <button class="action-button" id="githubSyncButton" type="submit">Sync from GitHub <span aria-hidden="true">→</span></button>
-                            <span style="color:#656d76;font-size:12px">Public repositories work without a token. Each activity list imports up to 500 records.</span>
+                            <span style="color:#656d76;font-size:12px">Public repositories work without a token. Each activity list imports up to 50 records to keep the hosted service responsive.</span>
                         </div>
                     </form>
                     <p id="githubSyncMessage" class="management-message" role="status" aria-live="polite"></p>
@@ -356,7 +356,7 @@
                         <div class="management-card-icon" aria-hidden="true">＋</div>
                         <div>
                             <h2 id="addHeading">Add repository</h2>
-                            <p>Enter the repository details and its owner ID to add a record.</p>
+                            <p>Add a database record manually. Owner ID must match the owner shown on the Users page; use GitHub sync above to fetch live repository data.</p>
                         </div>
                     </div>
                     <form id="addRepositoryForm">
@@ -371,11 +371,11 @@
                             </div>
                             <div class="form-group">
                                 <label for="addName">Repository name</label>
-                                <input type="text" id="addName" maxlength="100" placeholder="e.g. analytics-dashboard" required>
+                                <input type="text" id="addName" maxlength="255" placeholder="e.g. analytics-dashboard" required>
                             </div>
                             <div class="form-group">
                                 <label for="addFullName">Full name</label>
-                                <input type="text" id="addFullName" maxlength="200" placeholder="owner/repository" required>
+                                <input type="text" id="addFullName" maxlength="500" placeholder="owner/repository" required>
                             </div>
                             <div class="form-group management-span-two">
                                 <label for="addDescription">Description <span style="font-weight:400;color:#656d76">(optional)</span></label>
@@ -396,7 +396,7 @@
                         </div>
                         <div class="management-actions">
                             <button class="action-button" type="submit">Add repository <span aria-hidden="true">→</span></button>
-                            <span style="color:#656d76;font-size:12px">Fields marked by the form are required.</span>
+                            <span style="color:#656d76;font-size:12px">Repository ID must be unique. Use the matching User ID from the Users page.</span>
                         </div>
                     </form>
                     <p id="addMessage" class="management-message" role="status" aria-live="polite"></p>

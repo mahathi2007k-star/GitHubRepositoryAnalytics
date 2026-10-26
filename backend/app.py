@@ -96,7 +96,7 @@ def get_users():
                 U.PROFILE_URL,
                 U.LOCATION,
                 U.CREATED_AT,
-                NVL((
+                COALESCE((
                     SELECT SUM(C.CONTRIBUTIONS)
                     FROM CONTRIBUTES_TO C
                     WHERE C.USER_ID = U.USER_ID
@@ -432,7 +432,7 @@ def get_dashboard_stats():
                 (SELECT COUNT(*) FROM PULL_REQUEST),
                 (SELECT COUNT(*) FROM GIT_COMMIT),
                 (SELECT COUNT(*) FROM LANGUAGE)
-            FROM DUAL
+            
         """)
 
         row = cursor.fetchone()
@@ -470,8 +470,8 @@ def get_analytics():
         # Total stars and forks
         cursor.execute("""
             SELECT
-                NVL(SUM(STARS), 0),
-                NVL(SUM(FORKS), 0)
+                COALESCE(SUM(STARS), 0),
+                COALESCE(SUM(FORKS), 0)
             FROM REPOSITORY
         """)
 
@@ -484,13 +484,13 @@ def get_analytics():
         # Open and closed issues
         cursor.execute("""
             SELECT
-                NVL(SUM(
+                COALESCE(SUM(
                     CASE
                         WHEN LOWER(STATE) = 'open' THEN 1
                         ELSE 0
                     END
                 ), 0),
-                NVL(SUM(
+                COALESCE(SUM(
                     CASE
                         WHEN LOWER(STATE) = 'closed' THEN 1
                         ELSE 0
@@ -508,13 +508,13 @@ def get_analytics():
         # Open and merged pull requests
         cursor.execute("""
             SELECT
-                NVL(SUM(
+                COALESCE(SUM(
                     CASE
                         WHEN LOWER(STATE) = 'open' THEN 1
                         ELSE 0
                     END
                 ), 0),
-                NVL(SUM(
+                COALESCE(SUM(
                     CASE
                         WHEN MERGED_AT IS NOT NULL THEN 1
                         ELSE 0
@@ -531,7 +531,7 @@ def get_analytics():
 
         # Total contributions
         cursor.execute("""
-            SELECT NVL(SUM(CONTRIBUTIONS), 0)
+            SELECT COALESCE(SUM(CONTRIBUTIONS), 0)
             FROM CONTRIBUTES_TO
         """)
 
@@ -579,7 +579,7 @@ def sync_github_data():
         return jsonify({"error": str(error)}), error.status_code
     except Exception:
         app.logger.exception("GitHub repository synchronization failed")
-        return jsonify({"error": "Synchronization failed while saving data to Oracle."}), 500
+        return jsonify({"error": "Synchronization failed while saving data to PostgreSQL."}), 500
 
 
 @app.route("/api/repositories", methods=["POST"])
@@ -612,9 +612,34 @@ def add_repository():
             return jsonify({"error": "Description must be text."}), 400
         name = name.strip()
         full_name = full_name.strip()
+        if full_name.count("/") != 1:
+            return jsonify({"error": "Full name must use owner/repository format."}), 400
+
+        full_name_owner, full_name_repository = full_name.split("/", 1)
+        if not full_name_owner or not full_name_repository:
+            return jsonify({"error": "Full name must include both owner and repository."}), 400
+        if full_name_repository.casefold() != name.casefold():
+            return jsonify({"error": "Repository name must match the repository part of the full name."}), 400
 
         connection = get_connection()
         cursor = connection.cursor()
+
+        cursor.execute("SELECT USERNAME FROM GITHUB_USER WHERE USER_ID = %s", (owner_id,))
+        owner_row = cursor.fetchone()
+        if owner_row is None:
+            return jsonify({
+                "error": "Owner ID was not found. Use an ID shown on the Users page, or sync this repository from GitHub first."
+            }), 400
+        if str(owner_row[0]).casefold() != full_name_owner.casefold():
+            return jsonify({
+                "error": "Owner ID does not match the owner in the full name."
+            }), 400
+
+        cursor.execute("SELECT 1 FROM REPOSITORY WHERE REPOSITORY_ID = %s", (repository_id,))
+        if cursor.fetchone() is not None:
+            return jsonify({
+                "error": "Repository ID already exists. Choose a unique ID or sync the GitHub repository to update it."
+            }), 409
 
         cursor.execute("""
             INSERT INTO REPOSITORY (
@@ -628,7 +653,7 @@ def add_repository():
                 OWNER_ID
             )
             VALUES (
-                :1, :2, :3, :4, :5, :6, :7, :8
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
         """, (
             repository_id,
@@ -647,8 +672,12 @@ def add_repository():
             "message": "Repository added successfully"
         }), 201
 
-    except Exception:
+    except Exception as error:
         app.logger.exception("Database/API request failed")
+        if getattr(error, "sqlstate", None) == "23505":
+            return jsonify({"error": "Repository ID already exists. Choose a unique ID."}), 409
+        if getattr(error, "sqlstate", None) == "23503":
+            return jsonify({"error": "Owner ID was not found. Use an ID shown on the Users page."}), 400
         return jsonify({"error": "The request could not be completed."}), 500
 
     finally:
@@ -680,7 +709,7 @@ def search_repositories():
                 OPEN_ISSUES,
                 OWNER_ID
             FROM REPOSITORY
-            WHERE LOWER(NAME) LIKE LOWER(:1)
+            WHERE LOWER(NAME) LIKE LOWER(%s)
             ORDER BY REPOSITORY_ID
         """, (f"%{name}%",))
 
@@ -731,9 +760,11 @@ def fetch_repository(repository_id):
                 STARS,
                 FORKS,
                 OPEN_ISSUES,
-                OWNER_ID
+                OWNER_ID,
+                CREATED_AT,
+                UPDATED_AT
             FROM REPOSITORY
-            WHERE REPOSITORY_ID = :1
+            WHERE REPOSITORY_ID = %s
         """, (repository_id,))
 
         row = cursor.fetchone()
@@ -751,7 +782,9 @@ def fetch_repository(repository_id):
             "stars": row[4],
             "forks": row[5],
             "open_issues": row[6],
-            "owner_id": row[7]
+            "owner_id": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None
         }
 
         return jsonify(repository), 200
@@ -799,11 +832,11 @@ def update_repository(repository_id):
         cursor.execute("""
             UPDATE REPOSITORY
             SET
-                NAME = :1,
-                STARS = :2,
-                FORKS = :3,
-                OPEN_ISSUES = :4
-            WHERE REPOSITORY_ID = :5
+                NAME = %s,
+                STARS = %s,
+                FORKS = %s,
+                OPEN_ISSUES = %s
+            WHERE REPOSITORY_ID = %s
         """, (
             name,
             stars,
@@ -847,7 +880,7 @@ def delete_repository(repository_id):
 
         cursor.execute("""
             DELETE FROM REPOSITORY
-            WHERE REPOSITORY_ID = :1
+            WHERE REPOSITORY_ID = %s
         """, (repository_id,))
 
         if cursor.rowcount == 0:
@@ -908,7 +941,7 @@ def register_user():
         cursor.execute("""
             SELECT COUNT(*)
             FROM APP_ACCOUNT
-            WHERE USERNAME = :1 OR EMAIL = :2
+            WHERE USERNAME = %s OR EMAIL = %s
         """, (username, email))
         if cursor.fetchone()[0]:
             return jsonify({"error": "That username or email is already registered."}), 409
@@ -921,7 +954,7 @@ def register_user():
                 ROLE,
                 CREATED_AT
             )
-            VALUES (:1, :2, :3, 'USER', SYSTIMESTAMP)
+            VALUES (%s, %s, %s, 'USER', CURRENT_TIMESTAMP)
         """, (username, email, password_hash))
 
         connection.commit()
@@ -967,7 +1000,7 @@ def request_password_reset():
         connection = get_connection()
         cursor = connection.cursor()
         cursor.execute(
-            "SELECT ACCOUNT_ID, USERNAME, EMAIL FROM APP_ACCOUNT WHERE EMAIL = :1",
+            "SELECT ACCOUNT_ID, USERNAME, EMAIL FROM APP_ACCOUNT WHERE EMAIL = %s",
             (email,),
         )
         account = cursor.fetchone()
@@ -977,16 +1010,16 @@ def request_password_reset():
             reset_url = make_reset_url(request, reset_token, data.get("reset_page_url"))
             cursor.execute("""
                 SELECT COUNT(*) FROM APP_PASSWORD_RESET
-                WHERE ACCOUNT_ID = :1
-                  AND CREATED_AT > SYSTIMESTAMP - INTERVAL '1' MINUTE
+                WHERE ACCOUNT_ID = %s
+                  AND CREATED_AT > CURRENT_TIMESTAMP - INTERVAL '1 minute'
             """, (account[0],))
             if cursor.fetchone()[0] > 0:
                 connection.rollback()
                 return jsonify(generic_response), 202
-            cursor.execute("DELETE FROM APP_PASSWORD_RESET WHERE ACCOUNT_ID = :1", (account[0],))
+            cursor.execute("DELETE FROM APP_PASSWORD_RESET WHERE ACCOUNT_ID = %s", (account[0],))
             cursor.execute("""
                 INSERT INTO APP_PASSWORD_RESET (TOKEN_HASH, ACCOUNT_ID, EXPIRES_AT)
-                VALUES (:1, :2, SYSTIMESTAMP + INTERVAL '30' MINUTE)
+                VALUES (%s, %s, CURRENT_TIMESTAMP + INTERVAL '30 minutes')
             """, (token_hash, account[0]))
             send_reset_email(account[2], account[1], reset_url)
             connection.commit()
@@ -1026,7 +1059,7 @@ def complete_password_reset():
         cursor.execute("""
             SELECT ACCOUNT_ID
             FROM APP_PASSWORD_RESET
-            WHERE TOKEN_HASH = :1 AND EXPIRES_AT > SYSTIMESTAMP
+            WHERE TOKEN_HASH = %s AND EXPIRES_AT > CURRENT_TIMESTAMP
             FOR UPDATE
         """, (token_hash,))
         row = cursor.fetchone()
@@ -1037,10 +1070,10 @@ def complete_password_reset():
         account_id = row[0]
         password_hash = generate_password_hash(password)
         cursor.execute(
-            "UPDATE APP_ACCOUNT SET PASSWORD_HASH = :1 WHERE ACCOUNT_ID = :2",
+            "UPDATE APP_ACCOUNT SET PASSWORD_HASH = %s WHERE ACCOUNT_ID = %s",
             (password_hash, account_id),
         )
-        cursor.execute("DELETE FROM APP_PASSWORD_RESET WHERE ACCOUNT_ID = :1", (account_id,))
+        cursor.execute("DELETE FROM APP_PASSWORD_RESET WHERE ACCOUNT_ID = %s", (account_id,))
         connection.commit()
         return jsonify({"message": "Password reset successfully. You can now log in."}), 200
     except Exception:
@@ -1083,7 +1116,7 @@ def login_user():
                 PASSWORD_HASH,
                 ROLE
             FROM APP_ACCOUNT
-            WHERE USERNAME = :1
+            WHERE USERNAME = %s
         """, (username,))
 
         row = cursor.fetchone()
@@ -1145,3 +1178,4 @@ def current_account():
 
 if __name__ == "__main__":
     app.run(debug=not production)
+

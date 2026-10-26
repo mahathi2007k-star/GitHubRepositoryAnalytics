@@ -1,5 +1,5 @@
 Flask
 flask-cors
-oracledb
+psycopg[binary]>=3.2,<4
 Werkzeug
 gunicorn>=23,<24

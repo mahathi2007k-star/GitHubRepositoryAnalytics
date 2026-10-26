@@ -11,8 +11,12 @@ from urllib.request import Request, urlopen
 from db import get_connection
 
 API_ROOT = "https://api.github.com"
-MAX_PAGES = 5
-PAGE_SIZE = 100
+# Keep each sync bounded for Render's small free instances. Large GitHub
+# repositories can return very large issue bodies even when only a few pages
+# are requested.
+MAX_PAGES = 2
+PAGE_SIZE = 25
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
 class GitHubSyncError(Exception):
@@ -41,7 +45,13 @@ def github_request(url, token):
     request = Request(url, headers=headers, method="GET")
     try:
         with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise GitHubSyncError(
+                    "GitHub returned an unusually large data page. Try again later or sync a smaller repository.",
+                    413,
+                )
+            return json.loads(body.decode("utf-8"))
     except HTTPError as error:
         try:
             details = json.loads(error.read().decode("utf-8")).get("message", "")
@@ -96,43 +106,32 @@ def user_record(user):
 
 
 def upsert_users(cursor, users):
-    statement = """
-        MERGE INTO GITHUB_USER target
-        USING (SELECT :user_id USER_ID, :username USERNAME,
-                      :user_type USER_TYPE, :profile_url PROFILE_URL FROM DUAL) source
-        ON (target.USER_ID = source.USER_ID)
-        WHEN MATCHED THEN UPDATE SET
-            target.USERNAME = source.USERNAME,
-            target.USER_TYPE = NVL(source.USER_TYPE, target.USER_TYPE),
-            target.PROFILE_URL = NVL(source.PROFILE_URL, target.PROFILE_URL)
-        WHEN NOT MATCHED THEN INSERT
-            (USER_ID, USERNAME, USER_TYPE, PROFILE_URL)
-            VALUES (source.USER_ID, source.USERNAME, source.USER_TYPE, source.PROFILE_URL)
-    """
-    if users:
-        cursor.executemany(statement, list(users.values()))
+    if not users:
+        return
+    cursor.executemany("""
+        INSERT INTO GITHUB_USER (USER_ID, USERNAME, USER_TYPE, PROFILE_URL)
+        VALUES (%(user_id)s, %(username)s, %(user_type)s, %(profile_url)s)
+        ON CONFLICT (USER_ID) DO UPDATE SET
+            USERNAME = EXCLUDED.USERNAME,
+            USER_TYPE = COALESCE(EXCLUDED.USER_TYPE, GITHUB_USER.USER_TYPE),
+            PROFILE_URL = COALESCE(EXCLUDED.PROFILE_URL, GITHUB_USER.PROFILE_URL)
+    """, list(users.values()))
 
 
 def merge_repository(cursor, repository, owner_id):
     cursor.execute("""
-        MERGE INTO REPOSITORY target
-        USING (SELECT :repository_id REPOSITORY_ID FROM DUAL) source
-        ON (target.REPOSITORY_ID = source.REPOSITORY_ID)
-        WHEN MATCHED THEN UPDATE SET
-            target.NAME = :name,
-            target.FULL_NAME = :full_name,
-            target.DESCRIPTION = :description,
-            target.STARS = :stars,
-            target.FORKS = :forks,
-            target.OPEN_ISSUES = :open_issues,
-            target.CREATED_AT = :created_at,
-            target.UPDATED_AT = :updated_at,
-            target.OWNER_ID = :owner_id
-        WHEN NOT MATCHED THEN INSERT
+        INSERT INTO REPOSITORY
             (REPOSITORY_ID, NAME, FULL_NAME, DESCRIPTION, STARS, FORKS,
              OPEN_ISSUES, CREATED_AT, UPDATED_AT, OWNER_ID)
-            VALUES (:repository_id, :name, :full_name, :description, :stars, :forks,
-                    :open_issues, :created_at, :updated_at, :owner_id)
+        VALUES (%(repository_id)s, %(name)s, %(full_name)s, %(description)s,
+                %(stars)s, %(forks)s, %(open_issues)s, %(created_at)s,
+                %(updated_at)s, %(owner_id)s)
+        ON CONFLICT (REPOSITORY_ID) DO UPDATE SET
+            NAME = EXCLUDED.NAME, FULL_NAME = EXCLUDED.FULL_NAME,
+            DESCRIPTION = EXCLUDED.DESCRIPTION, STARS = EXCLUDED.STARS,
+            FORKS = EXCLUDED.FORKS, OPEN_ISSUES = EXCLUDED.OPEN_ISSUES,
+            CREATED_AT = EXCLUDED.CREATED_AT, UPDATED_AT = EXCLUDED.UPDATED_AT,
+            OWNER_ID = EXCLUDED.OWNER_ID
     """, {
         "repository_id": int(repository["id"]),
         "name": str(repository.get("name") or "")[:255],
@@ -148,76 +147,55 @@ def merge_repository(cursor, repository, owner_id):
 
 
 def upsert_contributions(cursor, rows):
-    if not rows:
-        return
-    cursor.executemany("""
-        MERGE INTO CONTRIBUTES_TO target
-        USING (SELECT :user_id USER_ID, :repository_id REPOSITORY_ID,
-                      :contributions CONTRIBUTIONS FROM DUAL) source
-        ON (target.USER_ID = source.USER_ID AND target.REPOSITORY_ID = source.REPOSITORY_ID)
-        WHEN MATCHED THEN UPDATE SET target.CONTRIBUTIONS = source.CONTRIBUTIONS
-        WHEN NOT MATCHED THEN INSERT (USER_ID, REPOSITORY_ID, CONTRIBUTIONS)
-            VALUES (source.USER_ID, source.REPOSITORY_ID, source.CONTRIBUTIONS)
-    """, rows)
+    if rows:
+        cursor.executemany("""
+            INSERT INTO CONTRIBUTES_TO (USER_ID, REPOSITORY_ID, CONTRIBUTIONS)
+            VALUES (%(user_id)s, %(repository_id)s, %(contributions)s)
+            ON CONFLICT (USER_ID, REPOSITORY_ID) DO UPDATE
+            SET CONTRIBUTIONS = EXCLUDED.CONTRIBUTIONS
+        """, rows)
 
 
 def upsert_commits(cursor, rows):
-    if not rows:
-        return
-    cursor.executemany("""
-        MERGE INTO GIT_COMMIT target
-        USING (SELECT :commit_id COMMIT_ID FROM DUAL) source
-        ON (target.COMMIT_ID = source.COMMIT_ID)
-        WHEN MATCHED THEN UPDATE SET
-            target.COMMIT_MESSAGE = :message,
-            target.COMMIT_DATE = :commit_date,
-            target.AUTHOR_ID = :author_id,
-            target.REPOSITORY_ID = :repository_id
-        WHEN NOT MATCHED THEN INSERT
-            (COMMIT_ID, COMMIT_MESSAGE, COMMIT_DATE, AUTHOR_ID, REPOSITORY_ID)
-            VALUES (:commit_id, :message, :commit_date, :author_id, :repository_id)
-    """, rows)
+    if rows:
+        cursor.executemany("""
+            INSERT INTO GIT_COMMIT
+                (COMMIT_ID, COMMIT_MESSAGE, COMMIT_DATE, AUTHOR_ID, REPOSITORY_ID)
+            VALUES (%(commit_id)s, %(message)s, %(commit_date)s, %(author_id)s, %(repository_id)s)
+            ON CONFLICT (COMMIT_ID) DO UPDATE SET
+                COMMIT_MESSAGE = EXCLUDED.COMMIT_MESSAGE,
+                COMMIT_DATE = EXCLUDED.COMMIT_DATE,
+                AUTHOR_ID = EXCLUDED.AUTHOR_ID,
+                REPOSITORY_ID = EXCLUDED.REPOSITORY_ID
+        """, rows)
 
 
 def upsert_issues(cursor, rows):
-    if not rows:
-        return
-    cursor.executemany("""
-        MERGE INTO ISSUE target
-        USING (SELECT :issue_id ISSUE_ID FROM DUAL) source
-        ON (target.ISSUE_ID = source.ISSUE_ID)
-        WHEN MATCHED THEN UPDATE SET
-            target.TITLE = :title,
-            target.STATE = :state,
-            target.CREATED_AT = :created_at,
-            target.CLOSED_AT = :closed_at,
-            target.CREATOR_ID = :creator_id,
-            target.REPOSITORY_ID = :repository_id
-        WHEN NOT MATCHED THEN INSERT
-            (ISSUE_ID, TITLE, STATE, CREATED_AT, CLOSED_AT, CREATOR_ID, REPOSITORY_ID)
-            VALUES (:issue_id, :title, :state, :created_at, :closed_at, :creator_id, :repository_id)
-    """, rows)
+    if rows:
+        cursor.executemany("""
+            INSERT INTO ISSUE
+                (ISSUE_ID, TITLE, STATE, CREATED_AT, CLOSED_AT, CREATOR_ID, REPOSITORY_ID)
+            VALUES (%(issue_id)s, %(title)s, %(state)s, %(created_at)s, %(closed_at)s,
+                    %(creator_id)s, %(repository_id)s)
+            ON CONFLICT (ISSUE_ID) DO UPDATE SET
+                TITLE = EXCLUDED.TITLE, STATE = EXCLUDED.STATE,
+                CREATED_AT = EXCLUDED.CREATED_AT, CLOSED_AT = EXCLUDED.CLOSED_AT,
+                CREATOR_ID = EXCLUDED.CREATOR_ID, REPOSITORY_ID = EXCLUDED.REPOSITORY_ID
+        """, rows)
 
 
 def upsert_pull_requests(cursor, rows):
-    if not rows:
-        return
-    cursor.executemany("""
-        MERGE INTO PULL_REQUEST target
-        USING (SELECT :pr_id PR_ID FROM DUAL) source
-        ON (target.PR_ID = source.PR_ID)
-        WHEN MATCHED THEN UPDATE SET
-            target.TITLE = :title,
-            target.STATE = :state,
-            target.CREATED_AT = :created_at,
-            target.MERGED_AT = :merged_at,
-            target.CREATOR_ID = :creator_id,
-            target.REPOSITORY_ID = :repository_id
-        WHEN NOT MATCHED THEN INSERT
-            (PR_ID, TITLE, STATE, CREATED_AT, MERGED_AT, CREATOR_ID, REPOSITORY_ID)
-            VALUES (:pr_id, :title, :state, :created_at, :merged_at, :creator_id, :repository_id)
-    """, rows)
-
+    if rows:
+        cursor.executemany("""
+            INSERT INTO PULL_REQUEST
+                (PR_ID, TITLE, STATE, CREATED_AT, MERGED_AT, CREATOR_ID, REPOSITORY_ID)
+            VALUES (%(pr_id)s, %(title)s, %(state)s, %(created_at)s, %(merged_at)s,
+                    %(creator_id)s, %(repository_id)s)
+            ON CONFLICT (PR_ID) DO UPDATE SET
+                TITLE = EXCLUDED.TITLE, STATE = EXCLUDED.STATE,
+                CREATED_AT = EXCLUDED.CREATED_AT, MERGED_AT = EXCLUDED.MERGED_AT,
+                CREATOR_ID = EXCLUDED.CREATOR_ID, REPOSITORY_ID = EXCLUDED.REPOSITORY_ID
+        """, rows)
 
 def sync_github_repository(full_name):
     if not isinstance(full_name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", full_name.strip()):
@@ -313,7 +291,7 @@ def sync_github_repository(full_name):
     try:
         connection = get_connection()
         cursor = connection.cursor()
-        cursor.execute("SELECT FULL_NAME FROM REPOSITORY WHERE REPOSITORY_ID = :1", (repository_id,))
+        cursor.execute("SELECT FULL_NAME FROM REPOSITORY WHERE REPOSITORY_ID = %s", (repository_id,))
         existing_repository = cursor.fetchone()
         incoming_full_name = str(repo.get("full_name") or full_name.strip())
         if existing_repository and existing_repository[0] and existing_repository[0].casefold() != incoming_full_name.casefold():
@@ -322,22 +300,19 @@ def sync_github_repository(full_name):
                 409,
             )
 
-        cursor.execute("LOCK TABLE LANGUAGE IN EXCLUSIVE MODE")
         cursor.execute("SELECT LANGUAGE_ID, LANGUAGE_NAME FROM LANGUAGE")
         existing_languages = {str(name).casefold() for _, name in cursor.fetchall() if name}
-        cursor.execute("SELECT NVL(MAX(LANGUAGE_ID), 0) FROM LANGUAGE")
-        next_language_id = int(cursor.fetchone()[0]) + 1
         inserted_languages = 0
         for language in sorted(languages):
             if language.casefold() in existing_languages:
                 continue
             cursor.execute(
-                "INSERT INTO LANGUAGE (LANGUAGE_ID, LANGUAGE_NAME) VALUES (:1, :2)",
-                (next_language_id, language[:100]),
+                "INSERT INTO LANGUAGE (LANGUAGE_NAME) VALUES (%s) ON CONFLICT (LANGUAGE_NAME) DO NOTHING",
+                (language[:100],),
             )
-            existing_languages.add(language.casefold())
-            next_language_id += 1
-            inserted_languages += 1
+            if cursor.rowcount:
+                existing_languages.add(language.casefold())
+                inserted_languages += 1
 
         upsert_users(cursor, users)
         merge_repository(cursor, repo, owner_id)

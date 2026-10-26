@@ -11,25 +11,13 @@ services:
         value: production
       - key: FLASK_SECRET_KEY
         generateValue: true
-      - key: ORACLE_USER
+      - key: DATABASE_URL
         sync: false
-      - key: ORACLE_PASSWORD
+      - key: RESEND_API_KEY
         sync: false
-      - key: ORACLE_DSN
-        sync: false
-      - key: ORACLE_WALLET_DIR
-        value: /etc/secrets
-      - key: ORACLE_WALLET_PASSWORD
-        sync: false
-      - key: SMTP_HOST
-        value: smtp.gmail.com
-      - key: SMTP_PORT
-        value: "587"
-      - key: SMTP_USERNAME
-        sync: false
-      - key: SMTP_PASSWORD
-        sync: false
-      - key: SMTP_FROM
+      - key: RESEND_FROM_EMAIL
         sync: false
       - key: PASSWORD_RESET_URL
+        sync: false
+      - key: GITHUB_TOKEN
         sync: false
