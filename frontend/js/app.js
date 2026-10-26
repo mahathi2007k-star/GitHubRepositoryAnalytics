@@ -18,9 +18,41 @@ function apiFetch(url, options = {}) {
     });
 }
 
+async function readApiResponse(response) {
+    try {
+        return await response.json();
+    } catch (error) {
+        const status = response.status ? ` (HTTP ${response.status})` : "";
+        throw new Error(
+            "The server returned an unreadable response" + status +
+            ". On Render, wait for the service to finish waking and try again."
+        );
+    }
+}
+
 function isWholeNumberAtLeast(value, minimum) {
     const text = String(value).trim();
     return /^\d+$/.test(text) && Number(text) >= minimum;
+}
+
+function renderRepositoryDetails(container, headingText, entries) {
+    container.replaceChildren();
+    const heading = document.createElement("h3");
+    heading.textContent = headingText;
+    container.appendChild(heading);
+
+    entries.forEach(function(entry) {
+        const paragraph = document.createElement("p");
+        const label = document.createElement("strong");
+        label.textContent = entry[0] + ": ";
+        paragraph.appendChild(label);
+        paragraph.appendChild(document.createTextNode(
+            entry[1] === null || entry[1] === undefined || entry[1] === ""
+                ? "N/A"
+                : String(entry[1])
+        ));
+        container.appendChild(paragraph);
+    });
 }
 
 // ============================================================
@@ -66,7 +98,7 @@ if (password === "") {
                 }
             );
 
-            const result = await response.json();
+            const result = await readApiResponse(response);
 
             if (response.ok) {
 
@@ -756,6 +788,7 @@ if (usersTableBody) {
 
 
                 const values = [
+                    user.user_id,
                     user.username,
                     user.name,
                     user.user_type,
@@ -791,7 +824,7 @@ if (usersTableBody) {
 
             usersTableBody.innerHTML = `
                 <tr>
-                    <td colspan="9">
+                    <td colspan="10">
                         Unable to load users.
                     </td>
                 </tr>
@@ -844,14 +877,22 @@ if (repositoriesTableBody) {
                         document.createElement("tr");
 
 
-                    row.innerHTML = `
-                        <td>${repository.name || "-"}</td>
-                        <td>${repository.full_name || "-"}</td>
-                        <td>${repository.stars ?? "-"}</td>
-                        <td>${repository.forks ?? "-"}</td>
-                        <td>${repository.open_issues ?? "-"}</td>
-                        <td>${repository.created_at || "-"}</td>
-                    `;
+                    const values = [
+                        repository.repository_id,
+                        repository.name,
+                        repository.full_name,
+                        repository.stars,
+                        repository.forks,
+                        repository.open_issues,
+                        repository.created_at
+                    ];
+                    values.forEach(function(value) {
+                        const cell = document.createElement("td");
+                        cell.textContent = value === null || value === undefined || value === ""
+                            ? "-"
+                            : String(value);
+                        row.appendChild(cell);
+                    });
 
 
                     repositoriesTableBody.appendChild(
@@ -873,7 +914,7 @@ if (repositoriesTableBody) {
 
             repositoriesTableBody.innerHTML = `
                 <tr>
-                    <td colspan="6">
+                    <td colspan="7">
                         Unable to load repositories.
                     </td>
                 </tr>
@@ -1397,7 +1438,7 @@ if (githubSyncForm) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ full_name: fullName })
             });
-            const result = await response.json();
+            const result = await readApiResponse(response);
             if (!response.ok) {
                 throw new Error(result.error || "GitHub synchronization failed.");
             }
@@ -1410,7 +1451,7 @@ if (githubSyncForm) {
                 result.contributors + " contributors, " + result.commits + " commits, " +
                 result.issues + " issues, " + result.pull_requests + " pull requests; " +
                 result.languages_added + " new languages added." +
-                (truncated.length ? " Reached the 500-record import limit for: " + truncated.join(", ") + "." : "");
+                (truncated.length ? " Reached the 50-record import limit for: " + truncated.join(", ") + "." : "");
         } catch (error) {
             message.style.color = "#cf222e";
             message.textContent = error.message || "Unable to complete GitHub synchronization.";
@@ -1486,7 +1527,7 @@ if (["addStars", "addForks", "addOpenIssues"].some((id) =>
                 }
             );
 
-            const result = await response.json();
+            const result = await readApiResponse(response);
 
             const addMessage = document.getElementById("addMessage");
 
@@ -1506,7 +1547,7 @@ if (["addStars", "addForks", "addOpenIssues"].some((id) =>
         } catch (error) {
 
             document.getElementById("addMessage").textContent =
-                "Unable to connect to the server.";
+                error.message || "Unable to connect to the server.";
         }
 
     });
@@ -1540,32 +1581,27 @@ if (fetchRepositoryForm) {
                 `http://127.0.0.1:5000/api/repositories/${repositoryId}`
             );
 
-            const result = await response.json();
+            const result = await readApiResponse(response);
 
             if (response.ok) {
-
-                fetchResult.innerHTML = `
-                    <h3>Repository Details</h3>
-                    <p><strong>ID:</strong> ${result.repository_id}</p>
-                    <p><strong>Name:</strong> ${result.name}</p>
-                    <p><strong>Full Name:</strong> ${result.full_name}</p>
-                    <p><strong>Description:</strong> ${result.description || "N/A"}</p>
-                    <p><strong>Stars:</strong> ${result.stars}</p>
-                    <p><strong>Forks:</strong> ${result.forks}</p>
-                    <p><strong>Open Issues:</strong> ${result.open_issues}</p>
-                    <p><strong>Owner ID:</strong> ${result.owner_id}</p>
-                `;
-
+                renderRepositoryDetails(fetchResult, "Repository Details", [
+                    ["ID", result.repository_id],
+                    ["Name", result.name],
+                    ["Full Name", result.full_name],
+                    ["Description", result.description],
+                    ["Stars", result.stars],
+                    ["Forks", result.forks],
+                    ["Open Issues", result.open_issues],
+                    ["Owner ID", result.owner_id],
+                    ["Created", result.created_at],
+                    ["Updated", result.updated_at]
+                ]);
             } else {
-
-                fetchResult.innerHTML =
-                    `<p>Repository not found.</p>`;
+                fetchResult.textContent = result.error || "Repository not found.";
             }
 
         } catch (error) {
-
-            fetchResult.innerHTML =
-                `<p>Unable to connect to the server.</p>`;
+            fetchResult.textContent = error.message || "Unable to connect to the server.";
         }
 
     });
@@ -1585,8 +1621,7 @@ if (searchButton) {
             document.getElementById("searchResults");
 
         if (searchName === "") {
-            searchResults.innerHTML =
-                "<p>Please enter a repository name.</p>";
+            searchResults.textContent = "Please enter a repository name.";
             return;
         }
 
@@ -1595,37 +1630,59 @@ if (searchButton) {
                 `http://127.0.0.1:5000/api/repositories/search?name=${encodeURIComponent(searchName)}`
             );
 
-            const repositories = await response.json();
-
-            if (response.ok && repositories.length > 0) {
-
-                let html = "<h3>Search Results</h3>";
-
-                repositories.forEach(function (repo) {
-                    html += `
-                        <div>
-                            <p><strong>ID:</strong> ${repo.repository_id}</p>
-                            <p><strong>Name:</strong> ${repo.name}</p>
-                            <p><strong>Full Name:</strong> ${repo.full_name}</p>
-                            <p><strong>Stars:</strong> ${repo.stars}</p>
-                            <p><strong>Forks:</strong> ${repo.forks}</p>
-                            <p><strong>Open Issues:</strong> ${repo.open_issues}</p>
-                            <p><strong>Owner ID:</strong> ${repo.owner_id}</p>
-                            <hr>
-                        </div>
-                    `;
-                });
-
-                searchResults.innerHTML = html;
-
-            } else {
-                searchResults.innerHTML =
-                    "<p>No repositories found.</p>";
+            const repositories = await readApiResponse(response);
+            if (!response.ok) {
+                throw new Error(repositories.error || "Repository search failed.");
             }
 
+            searchResults.replaceChildren();
+            if (!Array.isArray(repositories) || repositories.length === 0) {
+                searchResults.textContent = "No repositories found.";
+                return;
+            }
+
+            const heading = document.createElement("h3");
+            heading.textContent = "Search Results";
+            searchResults.appendChild(heading);
+
+            repositories.forEach(function(repo) {
+                const card = document.createElement("div");
+                card.className = "repository-search-result";
+                renderRepositoryDetails(card, repo.full_name || repo.name || "Repository", [
+                    ["ID", repo.repository_id],
+                    ["Name", repo.name],
+                    ["Full Name", repo.full_name],
+                    ["Stars", repo.stars],
+                    ["Forks", repo.forks],
+                    ["Open Issues", repo.open_issues],
+                    ["Owner ID", repo.owner_id]
+                ]);
+
+                const actions = document.createElement("div");
+                actions.className = "management-actions";
+                const fetchButton = document.createElement("button");
+                fetchButton.type = "button";
+                fetchButton.className = "action-button secondary";
+                fetchButton.textContent = "Fetch details";
+                fetchButton.addEventListener("click", function() {
+                    document.getElementById("fetchRepositoryId").value = String(repo.repository_id);
+                    document.getElementById("fetchRepositoryForm").requestSubmit();
+                });
+                const deleteButton = document.createElement("button");
+                deleteButton.type = "button";
+                deleteButton.className = "action-button danger";
+                deleteButton.textContent = "Delete";
+                deleteButton.addEventListener("click", function() {
+                    document.getElementById("deleteRepositoryId").value = String(repo.repository_id);
+                    document.getElementById("deleteRepositoryForm").requestSubmit();
+                });
+                actions.append(fetchButton, deleteButton);
+                card.appendChild(actions);
+                searchResults.appendChild(card);
+            });
+
         } catch (error) {
-            searchResults.innerHTML =
-                "<p>Unable to connect to the server.</p>";
+            searchResults.textContent = error.message || "Unable to connect to the server.";
         }
     });
 }
@@ -1681,7 +1738,7 @@ if (updateRepositoryForm) {
                 }
             );
 
-            const result = await response.json();
+            const result = await readApiResponse(response);
 
             if (response.ok) {
                 updateMessage.textContent =
@@ -1694,7 +1751,7 @@ if (updateRepositoryForm) {
 
         } catch (error) {
             updateMessage.textContent =
-                "Unable to connect to the server.";
+                error.message || "Unable to connect to the server.";
         }
     });
 }
@@ -1730,7 +1787,7 @@ if (deleteRepositoryForm) {
                 }
             );
 
-            const result = await response.json();
+            const result = await readApiResponse(response);
 
             if (response.ok) {
                 deleteMessage.textContent =
@@ -1743,7 +1800,7 @@ if (deleteRepositoryForm) {
 
         } catch (error) {
             deleteMessage.textContent =
-                "Unable to connect to the server.";
+                error.message || "Unable to connect to the server.";
         }
     });
 }

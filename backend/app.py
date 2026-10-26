@@ -612,9 +612,34 @@ def add_repository():
             return jsonify({"error": "Description must be text."}), 400
         name = name.strip()
         full_name = full_name.strip()
+        if full_name.count("/") != 1:
+            return jsonify({"error": "Full name must use owner/repository format."}), 400
+
+        full_name_owner, full_name_repository = full_name.split("/", 1)
+        if not full_name_owner or not full_name_repository:
+            return jsonify({"error": "Full name must include both owner and repository."}), 400
+        if full_name_repository.casefold() != name.casefold():
+            return jsonify({"error": "Repository name must match the repository part of the full name."}), 400
 
         connection = get_connection()
         cursor = connection.cursor()
+
+        cursor.execute("SELECT USERNAME FROM GITHUB_USER WHERE USER_ID = %s", (owner_id,))
+        owner_row = cursor.fetchone()
+        if owner_row is None:
+            return jsonify({
+                "error": "Owner ID was not found. Use an ID shown on the Users page, or sync this repository from GitHub first."
+            }), 400
+        if str(owner_row[0]).casefold() != full_name_owner.casefold():
+            return jsonify({
+                "error": "Owner ID does not match the owner in the full name."
+            }), 400
+
+        cursor.execute("SELECT 1 FROM REPOSITORY WHERE REPOSITORY_ID = %s", (repository_id,))
+        if cursor.fetchone() is not None:
+            return jsonify({
+                "error": "Repository ID already exists. Choose a unique ID or sync the GitHub repository to update it."
+            }), 409
 
         cursor.execute("""
             INSERT INTO REPOSITORY (
@@ -647,8 +672,12 @@ def add_repository():
             "message": "Repository added successfully"
         }), 201
 
-    except Exception:
+    except Exception as error:
         app.logger.exception("Database/API request failed")
+        if getattr(error, "sqlstate", None) == "23505":
+            return jsonify({"error": "Repository ID already exists. Choose a unique ID."}), 409
+        if getattr(error, "sqlstate", None) == "23503":
+            return jsonify({"error": "Owner ID was not found. Use an ID shown on the Users page."}), 400
         return jsonify({"error": "The request could not be completed."}), 500
 
     finally:
@@ -731,7 +760,9 @@ def fetch_repository(repository_id):
                 STARS,
                 FORKS,
                 OPEN_ISSUES,
-                OWNER_ID
+                OWNER_ID,
+                CREATED_AT,
+                UPDATED_AT
             FROM REPOSITORY
             WHERE REPOSITORY_ID = %s
         """, (repository_id,))
@@ -751,7 +782,9 @@ def fetch_repository(repository_id):
             "stars": row[4],
             "forks": row[5],
             "open_issues": row[6],
-            "owner_id": row[7]
+            "owner_id": row[7],
+            "created_at": row[8].isoformat() if row[8] else None,
+            "updated_at": row[9].isoformat() if row[9] else None
         }
 
         return jsonify(repository), 200

@@ -11,8 +11,12 @@ from urllib.request import Request, urlopen
 from db import get_connection
 
 API_ROOT = "https://api.github.com"
-MAX_PAGES = 5
-PAGE_SIZE = 100
+# Keep each sync bounded for Render's small free instances. Large GitHub
+# repositories can return very large issue bodies even when only a few pages
+# are requested.
+MAX_PAGES = 2
+PAGE_SIZE = 25
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
 class GitHubSyncError(Exception):
@@ -41,7 +45,13 @@ def github_request(url, token):
     request = Request(url, headers=headers, method="GET")
     try:
         with urlopen(request, timeout=20) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            if len(body) > MAX_RESPONSE_BYTES:
+                raise GitHubSyncError(
+                    "GitHub returned an unusually large data page. Try again later or sync a smaller repository.",
+                    413,
+                )
+            return json.loads(body.decode("utf-8"))
     except HTTPError as error:
         try:
             details = json.loads(error.read().decode("utf-8")).get("message", "")
