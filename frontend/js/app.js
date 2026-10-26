@@ -1377,7 +1377,7 @@ if (
 }
 // ================================
 // ================================
-// SYNC A PUBLIC GITHUB REPOSITORY INTO ORACLE
+// SYNC A PUBLIC GITHUB REPOSITORY INTO THE HOSTED DATABASE
 // ================================
 const githubSyncForm = document.getElementById("githubSyncForm");
 
@@ -1389,7 +1389,7 @@ if (githubSyncForm) {
         const fullName = document.getElementById("githubSyncFullName").value.trim();
         button.disabled = true;
         message.style.color = "#656d76";
-        message.textContent = "Fetching GitHub data and saving it to Oracle…";
+        message.textContent = "Fetching GitHub data and saving it to the hosted database…";
 
         try {
             const response = await apiFetch("/api/github/sync", {
