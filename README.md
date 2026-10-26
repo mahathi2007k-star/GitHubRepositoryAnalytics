@@ -58,7 +58,7 @@ For a fresh database, run backend/schema_project.sql as the schema owner instead
    .\venv\Scripts\python.exe promote_admin.py YOUR_USERNAME
    ```
 
-   Log out and back in to load the administrator role. All signed-in accounts can currently add, update, and delete repositories; the ADMIN role is reserved for future administrator-only features.
+   Log out and back in to load the administrator role. The analytics pages show the signed-in username and role. All signed-in accounts can add, update, and delete repositories; the ADMIN role identifies the project administrator without restricting teammate repository management.
 
 Email password recovery requires SMTP settings in the backend environment: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, and `SMTP_FROM`. In production, also set `PASSWORD_RESET_URL` to the HTTPS reset page URL. Keep mail credentials private. For local recovery, run `python reset_password.py USERNAME` from `backend/`; it prompts for a replacement password. For public repository imports, no GitHub token is needed. If you configure an optional `GITHUB_TOKEN` for higher API limits, keep it secret and set it only in the backend terminal. The importer currently fetches up to 500 records per activity list. The Oracle variables apply only to the PowerShell terminal that starts Flask. Do not commit real credentials. The development Flask secret is generated for the local process; production requires FLASK_SECRET_KEY and APP_ENV=production.
 

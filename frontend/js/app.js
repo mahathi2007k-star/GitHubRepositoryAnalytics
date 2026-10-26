@@ -1830,6 +1830,37 @@ const loggedIn = sessionStorage.getItem("loggedIn");
 
 if (!publicPages.includes(currentPage) && loggedIn !== "true") {
     window.location.href = "login.html";
+} else if (!publicPages.includes(currentPage)) {
+    // Refresh the displayed account from the server session on every analytics page.
+    apiFetch("/api/me")
+        .then(async response => {
+            if (!response.ok) throw new Error("Could not load the signed-in account.");
+            const account = await response.json();
+            if (!account.account_id || !account.username || !account.role) {
+                throw new Error("The server session has expired.");
+            }
+
+            sessionStorage.setItem("username", account.username);
+            sessionStorage.setItem("role", account.role);
+
+            const greeting = document.querySelector("[data-user-greeting]");
+            if (greeting) greeting.textContent = `Welcome, ${account.username}`;
+
+            const roleBadge = document.querySelector("[data-user-role]");
+            if (roleBadge) {
+                const isAdmin = account.role.toUpperCase() === "ADMIN";
+                roleBadge.textContent = isAdmin ? "Administrator" : "User";
+                roleBadge.classList.toggle("user-role-badge-admin", isAdmin);
+                roleBadge.hidden = false;
+            }
+        })
+        .catch(error => {
+            console.warn("Unable to refresh the signed-in account:", error);
+            sessionStorage.removeItem("loggedIn");
+            sessionStorage.removeItem("username");
+            sessionStorage.removeItem("role");
+            window.location.replace("login.html");
+        });
 }
 
 
